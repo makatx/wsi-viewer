@@ -87,6 +87,16 @@ class TileManager:
             self.initializeGrid()
             self.addPixmapItems()
 
+    def setFile(self, filename):
+        self.openSlideFile(filename)
+
+        if self.slide != None:
+            self.reloadGrid()
+        else:
+            self.initializeGrid()
+            self.addPixmapItems()
+
+
     def openSlideFile(self, file):        
         self.slide = openslide.OpenSlide(file)
         self.level_dimensions = self.slide.level_dimensions
@@ -169,6 +179,9 @@ class TileManager:
                 height_fxy = int((mask_region_box[3]-mask_region_box[1]) * fxy)
 
                 mask_region = np.array(self.mask_overlay.resize((width_fxy, height_fxy), Image.NEAREST, mask_region_box))
+               
+                if not np.any(mask_region):
+                                    return Image.fromarray(slide_tile)
 
                 ## Add padding to make size (tile_size, tile_size)
                 if mask_region.shape[1] < self.tile_size:
@@ -187,9 +200,6 @@ class TileManager:
 
                 #mask_region = np.pad(mask_region, ((top_padding, bottom_padding), (left_padding, right_padding), (0,0)), 'constant')
                 #mask_region = slide_tile
-
-                if not np.any(mask_region):
-                    return Image.fromarray(slide_tile)
 
                 blended_tile = Image.fromarray(cv2.addWeighted(slide_tile, 1.0, mask_region, self.mask_alpha, 0.0))
             
@@ -389,8 +399,7 @@ class TileManager:
         
         
 class Pixplorer(QGraphicsScene):
-    
-    
+
     def __init__(self, file, parent=None,  grid_size=3, tile_size=512, start_level=5, start_origin=[0,0], window_size=(512,512)):
         super().__init__(parent)
         
@@ -531,13 +540,39 @@ class Pixplorer(QGraphicsScene):
         self.setSceneRect(x_rect, y_rect, w[0], w[1])
 
 
-app = QApplication([])
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Path-Pixplorer")
+        geometry = qApp.desktop().availableGeometry()
+        self.setGeometry(geometry)
+        
+        self.openAction = QAction("Open Slide")
+        self.openAction.triggered.connect(self.openSlideFile)
+
+        self.openMenu = self.menuBar().addMenu("Open")
+        self.openMenu.addAction(self.openAction)
+
+        self.closeAction = QAction("Exit")
+        self.closeAction.triggered.connect(self.close)
+        self.openMenu.addAction(self.closeAction)
 
 
-gs = Pixplorer(file='H:/Personal/Udacity/PathAI/jupyter_notebooks/patient_015/patient_015_node_1.tif', grid_size=5, start_origin=(28807, 138807), start_level=3, window_size=(768,768))
-gv = QGraphicsView(gs)
-gs.tileManager.setMaskFile('patient_015_node_1_dabSubAnnot.png')
+        self.graphicsScene = Pixplorer(file=None, grid_size=5, start_origin=(28807, 138807), start_level=3, window_size=(768,768))
+        self.graphicsView = QGraphicsView(self.graphicsScene)
+        self.setCentralWidget(self.graphicsView)
+
+    def openSlideFile(self):
+        filename = QFileDialog.getOpenFileName(self, "Select Slide File")
+        #print(filename)
+        self.graphicsScene.tileManager.setFile(filename[0])
 
 
-gv.show()
-app.exec_()
+
+if __name__ == "__main__":
+    app = QApplication([])
+
+    window = MainWindow()
+
+    window.show()
+    app.exec_()
