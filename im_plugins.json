@@ -1,0 +1,10 @@
+{
+    "ImageProcessingPlugins": [
+        {
+            "directory":"ImageProcessingPlugins",
+            "module":"samplePlugin",
+            "class_name":"samplePlugin"
+        }
+    ] 
+
+}

@@ -6,6 +6,9 @@ import numpy as np
 from PIL import Image
 import cv2
 import sys
+import importlib
+import argparse
+import json
 
 class AddNewColumnWorker(QRunnable):
     def __init__(self, tileManager, onLeft, debug=""):
@@ -83,11 +86,13 @@ class TileManager:
         self.mask_alpha = 0.3
         
         if file != None:
+            self.file = file
             self.openSlideFile(file)
             self.initializeGrid()
             self.addPixmapItems()
 
     def setFile(self, filename):
+        self.file = filename
         self.openSlideFile(filename)
 
         if self.slide != None:
@@ -106,18 +111,11 @@ class TileManager:
     def setMaskFile(self, file):
         if file==None:
             return
+        self.mask_file = file
         img = Image.fromarray(np.array(Image.open(file))[:,:,:3])
-        #img.putalpha(1)
         self.mask_overlay = img.resize(self.level_dimensions[self.mask_level], Image.NEAREST)
         self.displayMaskOverlay()
 
-        #dim=self.level_dimensions[self.mask_level]
-        #red = np.zeros((dim[1],dim[0],3), dtype=np.uint8)
-        #red[9187:9374,:,0] = 255
-        #img = Image.fromarray(red)
-        ##img.putalpha(1)
-        #self.mask_overlay = img
-        #self.displayMaskOverlay()
 
     def displayMaskOverlay(self):
         self.show_overlay_mask = True
@@ -224,11 +222,7 @@ class TileManager:
             for j in range(self.grid_size):
                 self.graphicsScene.addItem(self.tile_grid[i,j])
                 self.tile_grid[i,j].setPos(self.scenePos[0]+j*self.tile_size, self.scenePos[1]+i*self.tile_size)
-                
-                ## Testing grids
-                #text = graphicsScene.addText("["+str(i)+", "+str(j)+"]", font = QFont("Times", 10, QFont.Bold))
-                #text.setPos(j*self.tile_size, i*self.tile_size)
-    
+ 
     def reloadGrid(self):
         self.removePixmapItems()
         self.initializeGrid()
@@ -541,38 +535,81 @@ class Pixplorer(QGraphicsScene):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    '''
+    im_plugin_file is the full path to the json file listing the image processing plugins
+    '''
+
+    def __init__(self, im_plugin_file=None):
         super().__init__()
         self.setWindowTitle("Path-Pixplorer")
         geometry = qApp.desktop().availableGeometry()
         self.setGeometry(geometry)
-        
-        self.openAction = QAction("Open Slide")
-        self.openAction.triggered.connect(self.openSlideFile)
 
         self.openMenu = self.menuBar().addMenu("Open")
-        self.openMenu.addAction(self.openAction)
 
-        self.closeAction = QAction("Exit")
-        self.closeAction.triggered.connect(self.close)
-        self.openMenu.addAction(self.closeAction)
+        openAction = QAction("Slide", self)
+        openAction.triggered.connect(self.openSlideFile)
+        self.openMenu.addAction(openAction)
+
+        openMaskAction = QAction("Mask", self)
+        openMaskAction.triggered.connect(self.openMask)
+        self.openMenu.addAction(openMaskAction)
+
+        closeAction = QAction("Exit", self)
+        closeAction.triggered.connect(self.close)
+        self.openMenu.addAction(closeAction)
 
 
         self.graphicsScene = Pixplorer(file=None, grid_size=5, start_origin=(28807, 138807), start_level=3, window_size=(768,768))
         self.graphicsView = QGraphicsView(self.graphicsScene)
         self.setCentralWidget(self.graphicsView)
 
+        if im_plugin_file != None:
+            self.pluginMenu = self.menuBar().addMenu("Plugins")
+            self.plugins = []
+            self.loadPlugins(im_plugin_file)
+
     def openSlideFile(self):
         filename = QFileDialog.getOpenFileName(self, "Select Slide File")
-        #print(filename)
+        self.file = filename
         self.graphicsScene.tileManager.setFile(filename[0])
 
+    def openMask(self):
+        filename = QFileDialog.getOpenFileName(self, "Select Mask File")
+        self.mask_file = filename
+        self.graphicsScene.tileManager.setMaskFile(filename[0])
 
+    def loadPlugins(self, file):
+        with open(file, 'r') as f:
+            plg_list = json.load(f)['ImageProcessingPlugins']
+        for plg in plg_list:
+            mod = plg['directory']+"."+plg['module']
+            class_name = plg['class_name']
+            self.loadPluginActions(mod, class_name)
+
+
+    def loadPluginActions(self, mod, class_name):
+        module = importlib.import_module(mod)
+        plugin_class = getattr(module, class_name)
+        plugin_object = plugin_class(self.graphicsScene.tileManager)
+        plugin_action = QAction(plugin_object.action_name, self)
+        plugin_action.setToolTip(plugin_object.tooltip)
+        plugin_action.triggered.connect(plugin_object.runAction)
+        self.pluginMenu.addAction(plugin_action)
+        self.plugins.append(plugin_object)
+        
 
 if __name__ == "__main__":
+
+    ## Parse input arguments from commandline
+    aparser = argparse.ArgumentParser('Pathology digital whole slide image viewer using OpenSlide')
+    aparser.add_argument('--im-plugin', type=str, help='location of the plugins (json) file to load')
+
+    args = aparser.parse_args()
+
     app = QApplication([])
 
-    window = MainWindow()
+    window = MainWindow(im_plugin_file=args.im_plugin)
 
     window.show()
     app.exec_()
