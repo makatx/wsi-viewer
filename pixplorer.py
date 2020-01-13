@@ -542,8 +542,9 @@ class MainWindow(QMainWindow):
     def __init__(self, im_plugin_file=None):
         super().__init__()
         self.setWindowTitle("Path-Pixplorer")
-        geometry = qApp.desktop().availableGeometry()
+        geometry  = qApp.desktop().availableGeometry()
         self.setGeometry(geometry)
+        self.showMaximized()
 
         self.openMenu = self.menuBar().addMenu("Open")
 
@@ -569,13 +570,17 @@ class MainWindow(QMainWindow):
             self.plugins = []
             self.loadPlugins(im_plugin_file)
 
+        self.progressBar = None
+
     def openSlideFile(self):
         filename = QFileDialog.getOpenFileName(self, "Select Slide File")
+        #TODO: add check for unsupported file format or None file selection
         self.file = filename
         self.graphicsScene.tileManager.setFile(filename[0])
 
     def openMask(self):
         filename = QFileDialog.getOpenFileName(self, "Select Mask File")
+        #TODO: add check for unsupported file format or None file selection
         self.mask_file = filename
         self.graphicsScene.tileManager.setMaskFile(filename[0])
 
@@ -587,17 +592,33 @@ class MainWindow(QMainWindow):
             class_name = plg['class_name']
             self.loadPluginActions(mod, class_name)
 
-
     def loadPluginActions(self, mod, class_name):
         module = importlib.import_module(mod)
         plugin_class = getattr(module, class_name)
         plugin_object = plugin_class(self.graphicsScene.tileManager)
+        plugin_object.progressSignal.connect(self.updateProgress)
+
         plugin_action = QAction(plugin_object.action_name, self)
         plugin_action.setToolTip(plugin_object.tooltip)
         plugin_action.triggered.connect(plugin_object.runAction)
+
         self.pluginMenu.addAction(plugin_action)
         self.plugins.append(plugin_object)
         
+    @pyqtSlot(str, int)
+    def updateProgress(self, mesg, value):
+        if self.progressBar == None:
+             self.progressBar = QProgressBar()
+             self.progressBar.setMinimum(0)
+             self.progressBar.setMaximum(100)
+             self.progressBar.setValue(0)
+             self.statusBar().addWidget(self.progressBar)
+        if value >= 100:
+            self.statusBar().removeWidget(self.progressBar)
+            self.progressBar = None
+        else:
+            self.progressBar.setValue(value)
+            self.statusBar().showMessage(mesg)
 
 if __name__ == "__main__":
 
