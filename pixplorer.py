@@ -67,11 +67,13 @@ class SlideTile(QGraphicsPixmapItem):
         self.cell = cell
         self.slide_coords = slide_coords
 
-class TileManager:
+class TileManager(QObject):
     removeTile = pyqtSignal(SlideTile)
     addTile = pyqtSignal(SlideTile)
     
     def __init__(self, graphicsScene, grid_size=3, tile_size=512, start_level=5, file=None, start_origin=[0,0], start_pos=[0,0]):
+        super().__init__()
+        
         self.graphicsScene = graphicsScene
         self.grid_size = grid_size
         self.tile_size = tile_size
@@ -264,9 +266,9 @@ class TileManager:
                 y = int( slide_coords[1]+i*self.tile_size*self.level_downsamples[self.level] )
                 #print("({0}, {1}), {2}, {3}".format(x,y,self.level, self.tile_size))
                 img = self.getTileImage((x,y))
-                self.graphicsScene.removeItem(self.tile_grid[i,-1])
+                self.removeTile.emit(self.tile_grid[i,-1])
                 self.tile_grid[i,-1] = SlideTile(img.toqpixmap(), cell=[i,0], slide_coords=[x,y])
-                self.graphicsScene.addItem(self.tile_grid[i,-1])
+                self.addTile.emit(self.tile_grid[i,-1])
                 self.tile_grid[i,-1].setPos(ref_x-self.tile_size, ref_y+i*self.tile_size)
                 
             self.tile_grid = np.roll(self.tile_grid, 1, axis=1)
@@ -287,9 +289,9 @@ class TileManager:
             for i in range(self.grid_size):
                 y = int( slide_coords[1]+i*self.tile_size*self.level_downsamples[self.level] )
                 img = self.getTileImage((x,y))
-                self.graphicsScene.removeItem(self.tile_grid[i,0])
+                self.removeTile.emit(self.tile_grid[i,0])
                 self.tile_grid[i,0] = SlideTile(img.toqpixmap(), cell=[i,self.tile_size-1], slide_coords=[x,y])
-                self.graphicsScene.addItem(self.tile_grid[i,0])
+                self.addTile.emit(self.tile_grid[i,0])
                 self.tile_grid[i,0].setPos(ref_x+self.tile_size, ref_y+i*self.tile_size)
                 
             self.tile_grid = np.roll(self.tile_grid, -1, axis=1)
@@ -316,9 +318,9 @@ class TileManager:
                 x = int( slide_coords[0]+i*self.tile_size*self.level_downsamples[self.level] )
                 #print("({0}, {1}), {2}, {3}".format(x,y,self.level, self.tile_size))
                 img = self.getTileImage((x,y))
-                self.graphicsScene.removeItem(self.tile_grid[-1,i])
+                self.removeTile.emit(self.tile_grid[-1,i])
                 self.tile_grid[-1,i] = SlideTile(img.toqpixmap(), cell=[0,i], slide_coords=[x,y])
-                self.graphicsScene.addItem(self.tile_grid[-1,i])
+                self.addTile.emit(self.tile_grid[-1,i])
                 self.tile_grid[-1,i].setPos(ref_x+i*self.tile_size, ref_y-self.tile_size)
                 
             self.tile_grid = np.roll(self.tile_grid, 1, axis=0)
@@ -340,9 +342,9 @@ class TileManager:
             for i in range(self.grid_size):
                 x = int( slide_coords[0]+i*self.tile_size*self.level_downsamples[self.level] )
                 img = self.getTileImage((x,y))
-                self.graphicsScene.removeItem(self.tile_grid[0,i])
+                self.removeTile.emit(self.tile_grid[0,i])
                 self.tile_grid[0,i] = SlideTile(img.toqpixmap(), cell=[self.tile_size-1,i], slide_coords=[x,y])
-                self.graphicsScene.addItem(self.tile_grid[0,i])
+                self.addTile.emit(self.tile_grid[0,i])
                 self.tile_grid[0,i].setPos(ref_x+i*self.tile_size, ref_y+self.tile_size)
                 
             self.tile_grid = np.roll(self.tile_grid, -1, axis=0)
@@ -418,7 +420,7 @@ class Pixplorer(QGraphicsScene):
         self.tileManager = TileManager(self, file=file, grid_size=grid_size, tile_size=tile_size, start_level=start_level, start_origin=start_origin)
         self.tileManager.addTile.connect(self.slotAddTile)
         self.tileManager.removeTile.connect(self.slotRemoveTile)
-        
+
         self.threadPool = QThreadPool()
         #self.threadPool.setMaxThreadCount(2)
 
@@ -427,7 +429,7 @@ class Pixplorer(QGraphicsScene):
         self.removeItem(SlideTile)
 
     @pyqtSlot(SlideTile)
-    def slotAddTile(SlideTile):
+    def slotAddTile(self, SlideTile):
         self.addItem(SlideTile)
 
     def mouseMoveEvent(self, event):
