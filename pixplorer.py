@@ -68,6 +68,9 @@ class SlideTile(QGraphicsPixmapItem):
         self.slide_coords = slide_coords
 
 class TileManager:
+    removeTile = pyqtSignal(SlideTile)
+    addTile = pyqtSignal(SlideTile)
+    
     def __init__(self, graphicsScene, grid_size=3, tile_size=512, start_level=5, file=None, start_origin=[0,0], start_pos=[0,0]):
         self.graphicsScene = graphicsScene
         self.grid_size = grid_size
@@ -413,10 +416,20 @@ class Pixplorer(QGraphicsScene):
         self.setSceneRect(scene_start[0], scene_start[1], window_size[0], window_size[1])
         
         self.tileManager = TileManager(self, file=file, grid_size=grid_size, tile_size=tile_size, start_level=start_level, start_origin=start_origin)
+        self.tileManager.addTile.connect(self.slotAddTile)
+        self.tileManager.removeTile.connect(self.slotRemoveTile)
         
         self.threadPool = QThreadPool()
         #self.threadPool.setMaxThreadCount(2)
-            
+
+    @pyqtSlot(SlideTile)
+    def slotRemoveTile(self, SlideTile):
+        self.removeItem(SlideTile)
+
+    @pyqtSlot(SlideTile)
+    def slotAddTile(SlideTile):
+        self.addItem(SlideTile)
+
     def mouseMoveEvent(self, event):
                        
         p = event.lastScenePos()
