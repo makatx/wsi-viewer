@@ -18,12 +18,12 @@ class AddNewColumnWorker(QRunnable):
         self.debug = debug
     
     def run(self):
-        print('{0}: about to run thread'.format(self.debug))
+        #print('{0}: about to run thread'.format(self.debug))
         self.tileManager.mutex.lock()
         self.tileManager.addNewColumn(onLeft=self.onLeft)
         self.tileManager.grid_update_locked = False
         self.tileManager.mutex.unlock()
-        print('{0}: thread complete'.format(self.debug))
+        #print('{0}: thread complete'.format(self.debug))
         
 class AddNewRowWorker(QRunnable):
     def __init__(self, tileManager, onTop, debug=""):
@@ -33,12 +33,12 @@ class AddNewRowWorker(QRunnable):
         self.debug = debug
     
     def run(self):
-        print('{0}: about to run thread'.format(self.debug))
+        #print('{0}: about to run thread'.format(self.debug))
         self.tileManager.mutex.lock()
         self.tileManager.addNewRow(onTop=self.onTop)
         self.tileManager.grid_update_locked = False
         self.tileManager.mutex.unlock()
-        print('{0}: thread complete'.format(self.debug))
+        #print('{0}: thread complete'.format(self.debug))
     
 class AddNewColumnRowWorker(QRunnable):
     def __init__(self, tileManager, onLeft, onTop, debug=""):
@@ -49,7 +49,7 @@ class AddNewColumnRowWorker(QRunnable):
         self.debug = debug
     
     def run(self):
-        print('{0}: about to run thread'.format(self.debug))
+        #print('{0}: about to run thread'.format(self.debug))
         self.tileManager.mutex.lock()
         
         self.tileManager.addNewColumn(onLeft=self.onLeft)
@@ -57,7 +57,7 @@ class AddNewColumnRowWorker(QRunnable):
         
         self.tileManager.grid_update_locked = False
         self.tileManager.mutex.unlock()
-        print('{0}: thread complete'.format(self.debug))
+        #print('{0}: thread complete'.format(self.debug))
 
 
 
@@ -92,13 +92,15 @@ class TileManager(QObject):
         
         if file != None:
             self.file = file
-            self.openSlideFile(file)
+            if not self.openSlideFile(file): 
+                return
             self.initializeGrid()
             self.addPixmapItems()
 
     def setFile(self, filename):
         self.file = filename
-        self.openSlideFile(filename)
+        if not self.openSlideFile(filename):
+            return
 
         if self.slide != None:
             self.reloadGrid()
@@ -108,18 +110,30 @@ class TileManager(QObject):
 
 
     def openSlideFile(self, file):        
-        self.slide = openslide.OpenSlide(file)
-        self.level_dimensions = self.slide.level_dimensions
-        self.level_downsamples = self.slide.level_downsamples
-        self.level_count = self.slide.level_count
+        try:
+            self.slide = openslide.OpenSlide(file)
+            self.level_dimensions = self.slide.level_dimensions
+            self.level_downsamples = self.slide.level_downsamples
+            self.level_count = self.slide.level_count
+        except:
+            dlg = ErrorPrompt(str(sys.exc_info()))
+            dlg.exec_()
+            return False
+        return True
     
     def setMaskFile(self, file):
-        if file==None:
+        if file==None or not hasattr(self, "file"):
+            dlg = ErrorPrompt("A slide file must first be open")
+            dlg.exec_()
             return
-        self.mask_file = file
-        img = Image.fromarray(np.array(Image.open(file))[:,:,:3])
-        self.mask_overlay = img.resize(self.level_dimensions[self.mask_level], Image.NEAREST)
-        self.displayMaskOverlay()
+        try:
+            self.mask_file = file
+            img = Image.fromarray(np.array(Image.open(file))[:,:,:3])
+            self.mask_overlay = img.resize(self.level_dimensions[self.mask_level], Image.NEAREST)
+            self.displayMaskOverlay()
+        except:
+            dlg = ErrorPrompt(str(sys.exc_info()))
+            dlg.exec_()
 
 
     def displayMaskOverlay(self):
@@ -145,7 +159,6 @@ class TileManager(QObject):
             xy_end = xy[0]+self.tile_size*self.level_downsamples[self.level] , xy[1]+self.tile_size*self.level_downsamples[self.level]  
             mask_region_box = np.array([xy[0], xy[1], xy_end[0], xy_end[1]]) // self.level_downsamples[self.mask_level]
 
-            print("\n\nmask_region_box: {0}".format(mask_region_box))
             if (mask_region_box[0]<0 and mask_region_box[2]<0) or (mask_region_box[1]<0 and mask_region_box[3]<0):
                 return Image.fromarray(slide_tile)
             if (mask_region_box[0]>self.mask_overlay.size[0] and mask_region_box[2]>self.mask_overlay.size[0]) or (mask_region_box[1]>self.mask_overlay.size[1] and mask_region_box[3]>self.mask_overlay.size[1]):
@@ -171,10 +184,10 @@ class TileManager(QObject):
 
             mask_region_box = mask_region_box.astype(np.int16)
 
-            print("mask_region_box: {0} \n Padding: {1}".format(mask_region_box, (top_padding, bottom_padding, left_padding, right_padding) ))
-
             try:
                 fxy = self.level_downsamples[self.mask_level]/self.level_downsamples[self.level]
+                
+                ## Alternate implementation (part of) that is slower:
                 #mask_region = np.array(self.mask_overlay)[mask_region_box[1]:mask_region_box[3], mask_region_box[0]:mask_region_box[2], :]
                 #mask_region = cv2.resize(mask_region, (0,0), fx=fxy, fy=fxy )#, interpolation=cv2.INTER_NEAREST)
                 
@@ -207,14 +220,15 @@ class TileManager(QObject):
                 blended_tile = Image.fromarray(cv2.addWeighted(slide_tile, 1.0, mask_region, self.mask_alpha, 0.0))
             
             except:
-                print("\n\n-----Exception occured-------, \nmask_region_box: {0} \n Padding: {1} \n\n".format(mask_region_box, (top_padding, bottom_padding, left_padding, right_padding) ))
-                print("\n Mask tile size: {0}\nSlide tile size: {1}".format(mask_region.shape, slide_tile.shape))
-                print(sys.exc_info())
+                dlg = ErrorPrompt(str(sys.exc_info()))
+                dlg.exec_()
                 sys.exit(1)
 
             return blended_tile
 
     def initializeGrid(self):
+        if not hasattr(self, "file"):
+            return
         for j in range(self.grid_size):
             for i in range(self.grid_size):
                 x = int( self.origin[0]+i*self.tile_size*self.level_downsamples[self.level] )
@@ -223,12 +237,16 @@ class TileManager(QObject):
                 self.tile_grid[j,i] = SlideTile(img.toqpixmap(), cell=[j,i], slide_coords=[x,y])
     
     def addPixmapItems(self):
+        if not hasattr(self, "file"):
+            return
         for i in range(self.grid_size):
             for j in range(self.grid_size):
                 self.graphicsScene.addItem(self.tile_grid[i,j])
                 self.tile_grid[i,j].setPos(self.scenePos[0]+j*self.tile_size, self.scenePos[1]+i*self.tile_size)
  
     def reloadGrid(self):
+        if not hasattr(self, "file"):
+            return
         self.removePixmapItems()
         self.initializeGrid()
         self.addPixmapItems()
@@ -240,6 +258,8 @@ class TileManager(QObject):
         self.reloadGrid()
 
     def removePixmapItems(self):
+        if not hasattr(self, "file"):
+            return
         for item in self.tile_grid.flatten():
             self.graphicsScene.removeItem(item)
     
@@ -553,6 +573,16 @@ class MainWindow(QMainWindow):
     '''
     im_plugin_file is the full path to the json file listing the image processing plugins
     '''
+    OPENSLIDE_FORMATS = "All OpenSlide Supported Formats (*.svs *.tif *.ndpi *.vms *.vmu *.scn *.mrxs *.tiff *.svslide *.tif *.bif) ;; \
+        Aperio (*.svs *.tif) ;; \
+        Hamamatsu (*.ndpi *.vms *.vmu) ;; \
+        Leica (*.scn) ;; \
+        MIRAX (*.mrxs) ;; \
+        Philips (*.tiff) ;; \
+        Sakura (*.svslide) ;; \
+        Trestle (*.tif) ;; \
+        Ventana (*.bif *.tif) ;; \
+        Generic tiled TIFF (*.tif)"
 
     def __init__(self, im_plugin_file=None):
         super().__init__()
@@ -575,6 +605,10 @@ class MainWindow(QMainWindow):
         closeAction.triggered.connect(self.close)
         self.openMenu.addAction(closeAction)
 
+        toggleMaskAction = QAction("Toggle Mask", self)
+        toggleMaskAction.triggered.connect(self.toggleMask)
+        self.menuBar().addAction(toggleMaskAction)
+
 
         self.graphicsScene = Pixplorer(file=None, grid_size=5, start_origin=(28807, 138807), start_level=3, window_size=(768,768))
         self.graphicsView = QGraphicsView(self.graphicsScene)
@@ -583,21 +617,28 @@ class MainWindow(QMainWindow):
         if im_plugin_file != None:
             self.pluginMenu = self.menuBar().addMenu("Plugins")
             self.plugins = []
-            self.loadPlugins(im_plugin_file)
+            try:
+                self.loadPlugins(im_plugin_file)
+            except:
+                dlg = ErrorPrompt("Could not load plugins:\n"+str(sys.exc_info()))
+                dlg.exec_()
 
         self.progressBar = None
 
     def openSlideFile(self):
-        filename = QFileDialog.getOpenFileName(self, "Select Slide File")
-        #TODO: add check for unsupported file format or None file selection
-        self.file = filename
-        self.graphicsScene.tileManager.setFile(filename[0])
+        dialog = QFileDialog(self)
+        dialog.setNameFilter(self.OPENSLIDE_FORMATS)
+
+        if dialog.exec_():
+            filename = dialog.selectedFiles()
+            self.file = filename
+            self.graphicsScene.tileManager.setFile(filename[0])
 
     def openMask(self):
-        filename = QFileDialog.getOpenFileName(self, "Select Mask File")
-        #TODO: add check for unsupported file format or None file selection
-        self.mask_file = filename
-        self.graphicsScene.tileManager.setMaskFile(filename[0])
+        filename = QFileDialog.getOpenFileName(self, "Select Mask File", "", "Image (*.png *.jpg *.jpeg *.bmp)")
+        if filename[0] != '':
+            self.mask_file = filename
+            self.graphicsScene.tileManager.setMaskFile(filename[0])
 
     def loadPlugins(self, file):
         with open(file, 'r') as f:
@@ -634,6 +675,32 @@ class MainWindow(QMainWindow):
         else:
             self.progressBar.setValue(value)
             self.statusBar().showMessage(mesg)
+
+    def toggleMask(self):
+        if self.graphicsScene.tileManager.show_overlay_mask:
+            self.graphicsScene.tileManager.hideMaskOverlay()
+        else:
+            self.graphicsScene.tileManager.displayMaskOverlay()
+
+class ErrorPrompt(QDialog):
+
+    def __init__(self, message):
+        super(ErrorPrompt, self).__init__()
+        
+        self.setWindowTitle("An Error Occured")
+        
+        QBtn = QDialogButtonBox.Ok
+        
+        self.buttonBox = QDialogButtonBox(QBtn)
+        self.buttonBox.accepted.connect(self.close)
+
+        self.label = QLabel(message, parent=self)
+        
+        self.layout = QVBoxLayout()
+        self.layout.addWidget(self.label)
+        self.layout.addWidget(self.buttonBox)
+        self.setLayout(self.layout)
+
 
 if __name__ == "__main__":
 
