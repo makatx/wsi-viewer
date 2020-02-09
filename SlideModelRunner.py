@@ -1,4 +1,5 @@
 from keras.models import Model, load_model
+from keras import backend as K
 import openslide
 from math import ceil
 import numpy as np
@@ -28,10 +29,36 @@ class SlideModelRunner(QObject):
         self.tile_list = self.getPatchCoordListFromFile(from_level=self.ROI_level)
         self.model = None
         self.predictions = None
+    
+    def updateParameters(self, opts):
+        if self.model_file != opts['model_file']:
+            self.model_file = opts['model_file']
+            self.unloadModel()
+
+        self.tile_size =  opts['tile_size']
+        self.batch_size = opts['batch_size']
         
+        #TODO: Add ROI_extraction_method option including Otsu thresholding 
+        #self.ROI_extraction_method = opts['ROI_extraction_method']
+        
+        #TODO: Add ROI selection
+        #if self.ROI_level != opts['ROI_level']:
+        #    self.ROI_level = opts['ROI_level']
+        #    self.tile_list = self.getPatchCoordListFromFile(from_level=self.ROI_level)
+
+        self.prediction_level = opts['prediction_level']
+        self.predictions = None
+
+    def updateSlideFile(self, slide_file):
+        self.slide_file = slide_file
+        self.slide = self.getWSI(self.slide_file)
+        self.tile_list = self.getPatchCoordListFromFile(from_level=self.ROI_level)
+        self.predictions = None
+
     @pyqtSlot()
     def unloadModel(self):
         self.model = None
+        K.clear_session()
 
     def loadModel(self):
         if self.model == None:

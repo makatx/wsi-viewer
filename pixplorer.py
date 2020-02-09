@@ -661,11 +661,10 @@ class ModelSelectDialog(QDialog):
         self.accept()
 
 class ModelRunThread(QRunnable):
-    def __init__(self, slideModelRunner, resultQueue, progressSignal=None, runCompleteSignal=None):
+    def __init__(self, slideModelRunner, resultQueue, progressSignal=None):
         super().__init__()
         self.slideModelRunner = slideModelRunner
         self.progressSignal = progressSignal
-        self.runCompleteSignal = runCompleteSignal
         self.resultQueue = resultQueue
 
     def run(self):
@@ -697,6 +696,7 @@ class MainWindow(QMainWindow):
         #self.setAutoFillBackground(True)
 
         self.modelRunner = None
+        self.file = None
 
         self.setWindowTitle("Path-Pixplorer")
         geometry  = qApp.desktop().availableGeometry()
@@ -720,7 +720,6 @@ class MainWindow(QMainWindow):
         self.modelMenu = self.menuBar().addMenu("Model...")
 
         self.modelSelector = ModelSelectDialog(parent=self)
-        self.modelSelector.model_file_text.textChanged.connect(self.modelFileChanged)
         self.selectModel = QAction("Select Model", self)
         self.selectModel.setEnabled(False)
         self.selectModel.triggered.connect(self.setModelFile)
@@ -757,9 +756,12 @@ class MainWindow(QMainWindow):
 
         if dialog.exec_():
             filename = dialog.selectedFiles()
-            self.file = filename[0]
-            self.graphicsScene.tileManager.setFile(self.file)
-            self.selectModel.setEnabled(True)
+            if self.file != filename[0]:
+                self.file = filename[0]
+                self.graphicsScene.tileManager.setFile(self.file)
+                self.selectModel.setEnabled(True)
+                if self.modelRunner != None:
+                    self.modelRunner.updateSlideFile(self.file)
 
     def openMask(self):
         filename = QFileDialog.getOpenFileName(self, "Select Mask File", "", "Image (*.png *.jpg *.jpeg *.bmp)")
@@ -768,26 +770,21 @@ class MainWindow(QMainWindow):
             self.graphicsScene.tileManager.setMaskFile(filename[0])
             self.toggleMaskAction.setEnabled(True)
 
-    @pyqtSlot(str)
-    def modelFileChanged(self, text):
-        #if self.modelRunner != None:
-        #    print("setting modelRunner to None...")
-        #    self.modelRunner = None
-        self.unloadModelSignal.emit()
-
     def setModelFile(self):
         #TODO: add slot for when the model file selection changes
         if self.modelSelector.exec() == QDialog.Accepted:
             self.currentModelOptions = self.modelSelector.formFields
             self.runModelAction.setEnabled(True)
+            if self.modelRunner != None:
+                self.modelRunner.updateParameters(self.currentModelOptions)
 
     def runSelectedModel(self):
         if self.modelRunner == None:
             opts = self.currentModelOptions
             self.modelRunner = SlideModelRunner(opts['model_file'], self.file, tile_size=opts['tile_size'], batch_size=opts['batch_size'], prediction_level=opts['prediction_level'])
-
-        self.modelRunner.modelRunCompleteSignal.connect(self.modelRunComplete)
-        self.unloadModelSignal.connect(self.modelRunner.unloadModel)
+            self.modelRunner.modelRunCompleteSignal.connect(self.modelRunComplete)
+            self.unloadModelSignal.connect(self.modelRunner.unloadModel)
+        
         self.resultQueue = Queue()
         modelRunWorker = ModelRunThread(self.modelRunner, self.resultQueue)
         self.threadPool = QThreadPool()
