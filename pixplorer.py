@@ -9,6 +9,9 @@ import sys
 import importlib
 import argparse
 import json
+import os
+from SlideModelRunner import SlideModelRunner
+from queue import Queue
 
 class AddNewColumnWorker(QRunnable):
     def __init__(self, tileManager, onLeft, debug=""):
@@ -58,8 +61,6 @@ class AddNewColumnRowWorker(QRunnable):
         self.tileManager.grid_update_locked = False
         self.tileManager.mutex.unlock()
         #print('{0}: thread complete'.format(self.debug))
-
-
 
 class SlideTile(QGraphicsPixmapItem):
     def __init__(self, pixmap, parent=None, cell=[0,0], slide_coords=[0,0]):
@@ -568,6 +569,109 @@ class Pixplorer(QGraphicsScene):
 
         self.setSceneRect(x_rect, y_rect, w[0], w[1])
 
+class ModelSelectDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.setWindowTitle("Select and configure a Keras/TF model to run on the current slide")
+        self.formFields = {}
+        
+        self.vlayout = QVBoxLayout()
+        self.formLayout = QFormLayout()
+        
+        self.model_file_selection_gb = QGroupBox('Select Model File')
+        self.model_file_vbox = QVBoxLayout()
+        self.model_file_text = QLineEdit()
+        self.model_file_browse = QPushButton('Browse...')
+        self.model_file_browse.clicked.connect(self.populate_model_file)
+        self.model_file_vbox.addWidget(self.model_file_text)
+        self.model_file_vbox.addWidget(self.model_file_browse)
+        self.model_file_selection_gb.setLayout(self.model_file_vbox)
+        
+
+        self.masksave_file_selection_gb = QGroupBox('Select Output Mask Save Location and Prefix')
+        self.masksave_file_vbox = QVBoxLayout()
+        self.masksave_file_text = QLineEdit()
+        self.masksave_file_browse = QPushButton('Browse...')
+        self.masksave_file_browse.clicked.connect(self.populate_save_file)
+        self.masksave_file_vbox.addWidget(self.masksave_file_text)
+        self.masksave_file_vbox.addWidget(self.masksave_file_browse)
+        self.masksave_file_selection_gb.setLayout(self.masksave_file_vbox)
+
+        self.parameters_gb = QGroupBox('Parameters')
+
+        self.tile_size_spinbox = QSpinBox(self)
+        self.tile_size_spinbox.setMinimum(128)
+        self.tile_size_spinbox.setMaximum(512)
+        self.tile_size_spinbox.setSingleStep(128)
+        self.tile_size_spinbox.setValue(256)
+        self.formLayout.addRow(QLabel("Tile Size"), self.tile_size_spinbox)
+
+        self.batch_size_spinbox = QSpinBox(self)
+        self.batch_size_spinbox.setMinimum(32)
+        self.batch_size_spinbox.setMaximum(128)
+        self.batch_size_spinbox.setSingleStep(16)
+        self.batch_size_spinbox.setValue(64)
+        self.formLayout.addRow(QLabel("Batch Size"), self.batch_size_spinbox)
+
+        self.prediction_level_spinbox = QSpinBox(self)
+        self.prediction_level_spinbox.setMinimum(0)
+        self.prediction_level_spinbox.setMaximum(3)
+        self.prediction_level_spinbox.setSingleStep(1)
+        self.prediction_level_spinbox.setValue(1)
+        self.formLayout.addRow(QLabel("Prediction Level"), self.prediction_level_spinbox)
+
+        self.parameters_gb.setLayout(self.formLayout)
+
+        self.buttonBox = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.buttonBox.accepted.connect(self.validateAccept)
+        self.buttonBox.rejected.connect(self.reject)
+
+
+        self.vlayout.addWidget(self.model_file_selection_gb)
+        self.vlayout.addWidget(self.masksave_file_selection_gb)
+        self.vlayout.addWidget(self.parameters_gb)
+        self.vlayout.addWidget(self.buttonBox)
+
+        self.setLayout(self.vlayout)
+
+    def populate_model_file(self):
+        filename = QFileDialog.getOpenFileName(self, "Select Model File", "./", "Model Saves (*.h5)")
+        if filename[0] != '':
+            self.model_file_text.setText(filename[0])
+
+    def populate_save_file(self):
+        filename = QFileDialog.getSaveFileName(self, "Save Output Mask File To...", "./", "Image (*.png)")
+        if filename[0] != '':
+            self.masksave_file_text.setText(filename[0])
+
+    def validateAccept(self):
+        if self.model_file_text.text() == '' or not os.path.exists(self.model_file_text.text()):
+            ErrorPrompt("Please select a valid model file to load.", "Input needed").exec()
+            return
+        if self.masksave_file_text.text() == '':
+            ErrorPrompt("Output mask will be saved to same location as the slide file", "Warning").exec()
+
+
+        self.formFields['model_file'] = self.model_file_text.text()
+        self.formFields['masksave_file'] = self.masksave_file_text.text()
+        self.formFields['tile_size'] = self.tile_size_spinbox.value()
+        self.formFields['batch_size'] = self.batch_size_spinbox.value()
+        self.formFields['prediction_level'] = self.prediction_level_spinbox.value()
+
+        self.accept()
+
+class ModelRunThread(QRunnable):
+    def __init__(self, slideModelRunner, resultQueue, progressSignal=None, runCompleteSignal=None):
+        super().__init__()
+        self.slideModelRunner = slideModelRunner
+        self.progressSignal = progressSignal
+        self.runCompleteSignal = runCompleteSignal
+        self.resultQueue = resultQueue
+
+    def run(self):
+        self.slideModelRunner.loadModel()
+        self.resultQueue.put(self.slideModelRunner.evaluateModelOnSlide(self.progressSignal))
+        self.slideModelRunner.modelRunCompleteSignal.emit()
 
 class MainWindow(QMainWindow):
     '''
@@ -586,6 +690,13 @@ class MainWindow(QMainWindow):
 
     def __init__(self, im_plugin_file=None):
         super().__init__()
+
+        #TODO: Make the application start backgroud dark
+        #plt = QGuiApplication.palette()
+        #self.setAutoFillBackground(True)
+
+        self.modelRunner = None
+
         self.setWindowTitle("Path-Pixplorer")
         geometry  = qApp.desktop().availableGeometry()
         self.setGeometry(geometry)
@@ -605,10 +716,24 @@ class MainWindow(QMainWindow):
         closeAction.triggered.connect(self.close)
         self.openMenu.addAction(closeAction)
 
-        toggleMaskAction = QAction("Toggle Mask", self)
-        toggleMaskAction.triggered.connect(self.toggleMask)
-        self.menuBar().addAction(toggleMaskAction)
+        self.modelMenu = self.menuBar().addMenu("Model...")
 
+        self.modelSelector = ModelSelectDialog(parent=self)
+        self.modelSelector.model_file_text.textChanged.connect(self.modelFileChanged)
+        self.selectModel = QAction("Select Model", self)
+        self.selectModel.setEnabled(False)
+        self.selectModel.triggered.connect(self.setModelFile)
+        self.modelMenu.addAction(self.selectModel)
+
+        self.runModelAction = QAction("Run model on current slide")
+        self.runModelAction.setEnabled(False)
+        self.runModelAction.triggered.connect(self.runSelectedModel)
+        self.modelMenu.addAction(self.runModelAction)
+
+        self.toggleMaskAction = QAction("Toggle Mask", self)
+        self.toggleMaskAction.triggered.connect(self.toggleMask)
+        self.toggleMaskAction.setEnabled(False)
+        self.menuBar().addAction(self.toggleMaskAction)
 
         self.graphicsScene = Pixplorer(file=None, grid_size=5, start_origin=(28807, 138807), start_level=3, window_size=(768,768))
         self.graphicsView = QGraphicsView(self.graphicsScene)
@@ -626,19 +751,51 @@ class MainWindow(QMainWindow):
         self.progressBar = None
 
     def openSlideFile(self):
-        dialog = QFileDialog(self)
+        dialog = QFileDialog(self, "Select slide file to open", "/home/mak/PathAI/slides")
         dialog.setNameFilter(self.OPENSLIDE_FORMATS)
 
         if dialog.exec_():
             filename = dialog.selectedFiles()
-            self.file = filename
-            self.graphicsScene.tileManager.setFile(filename[0])
+            self.file = filename[0]
+            self.graphicsScene.tileManager.setFile(self.file)
+            self.selectModel.setEnabled(True)
 
     def openMask(self):
         filename = QFileDialog.getOpenFileName(self, "Select Mask File", "", "Image (*.png *.jpg *.jpeg *.bmp)")
         if filename[0] != '':
-            self.mask_file = filename
+            self.mask_file = filename[0]
             self.graphicsScene.tileManager.setMaskFile(filename[0])
+            self.toggleMaskAction.setEnabled(True)
+
+    @pyqtSlot(str)
+    def modelFileChanged(self, text):
+        if self.modelRunner != None:
+            print("setting modelRunner to None...")
+            self.modelRunner = None
+
+    def setModelFile(self):
+        #TODO: add slot for when the model file selection changes
+        if self.modelSelector.exec() == QDialog.Accepted:
+            self.currentModelOptions = self.modelSelector.formFields
+            self.runModelAction.setEnabled(True)
+
+    def runSelectedModel(self):
+        if self.modelRunner == None:
+            opts = self.currentModelOptions
+            self.modelRunner = SlideModelRunner(opts['model_file'], self.file, tile_size=opts['tile_size'], batch_size=opts['batch_size'], prediction_level=opts['prediction_level'])
+
+        self.modelRunner.modelRunCompleteSignal.connect(self.modelRunComplete)
+        self.resultQueue = Queue()
+        modelRunWorker = ModelRunThread(self.modelRunner, self.resultQueue)
+        self.threadPool = QThreadPool()
+        self.threadPool.start(modelRunWorker)
+
+        #mask_img = self.modelRunner.getMaskFromPredictions()
+        #Image.fromarray(mask_img).save('mask.png')
+
+    @pyqtSlot()
+    def modelRunComplete(self):
+        print('Predictions shape from main thread: ', self.modelRunner.predictions.shape)
 
     def loadPlugins(self, file):
         with open(file, 'r') as f:
@@ -684,10 +841,10 @@ class MainWindow(QMainWindow):
 
 class ErrorPrompt(QDialog):
 
-    def __init__(self, message):
+    def __init__(self, message, title="An Error Occured"):
         super(ErrorPrompt, self).__init__()
         
-        self.setWindowTitle("An Error Occured")
+        self.setWindowTitle(title)
         
         QBtn = QDialogButtonBox.Ok
         
