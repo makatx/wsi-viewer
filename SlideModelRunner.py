@@ -4,7 +4,7 @@ from math import ceil
 import numpy as np
 from skimage.color import rgb2hed
 import cv2
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot
 
 class SlideModelRunner(QObject):
     '''
@@ -26,14 +26,17 @@ class SlideModelRunner(QObject):
         self.ROI_level = ROI_level
         self.prediction_level = prediction_level
         self.tile_list = self.getPatchCoordListFromFile(from_level=self.ROI_level)
+        self.model = None
         self.predictions = None
         
-        print("loading model from file: "+self.model_file)
-        self.model = load_model(self.model_file)
+    @pyqtSlot()
+    def unloadModel(self):
+        self.model = None
 
     def loadModel(self):
-        print("loading model from file: "+self.model_file)
-        self.model = load_model(self.model_file)
+        if self.model == None:
+            print("loading model from file: "+self.model_file)
+            self.model = load_model(self.model_file)
 
     def patch_batch_generator(self, progressSignal=None):
         '''
@@ -62,6 +65,7 @@ class SlideModelRunner(QObject):
         yield images_batch
 
     def evaluateModelOnSlide(self, progressSignal=None):
+        self.loadModel()
         steps = ceil((self.tile_list.shape[0])/self.batch_size)
         gen = self.patch_batch_generator(progressSignal=progressSignal)
         self.predictions = self.model.predict_generator(gen, steps, verbose=1)

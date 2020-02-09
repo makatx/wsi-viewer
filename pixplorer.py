@@ -669,7 +669,6 @@ class ModelRunThread(QRunnable):
         self.resultQueue = resultQueue
 
     def run(self):
-        self.slideModelRunner.loadModel()
         self.resultQueue.put(self.slideModelRunner.evaluateModelOnSlide(self.progressSignal))
         self.slideModelRunner.modelRunCompleteSignal.emit()
 
@@ -687,6 +686,8 @@ class MainWindow(QMainWindow):
         Trestle (*.tif) ;; \
         Ventana (*.bif *.tif) ;; \
         Generic tiled TIFF (*.tif)"
+
+    unloadModelSignal = pyqtSignal()
 
     def __init__(self, im_plugin_file=None):
         super().__init__()
@@ -769,9 +770,10 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str)
     def modelFileChanged(self, text):
-        if self.modelRunner != None:
-            print("setting modelRunner to None...")
-            self.modelRunner = None
+        #if self.modelRunner != None:
+        #    print("setting modelRunner to None...")
+        #    self.modelRunner = None
+        self.unloadModelSignal.emit()
 
     def setModelFile(self):
         #TODO: add slot for when the model file selection changes
@@ -785,6 +787,7 @@ class MainWindow(QMainWindow):
             self.modelRunner = SlideModelRunner(opts['model_file'], self.file, tile_size=opts['tile_size'], batch_size=opts['batch_size'], prediction_level=opts['prediction_level'])
 
         self.modelRunner.modelRunCompleteSignal.connect(self.modelRunComplete)
+        self.unloadModelSignal.connect(self.modelRunner.unloadModel)
         self.resultQueue = Queue()
         modelRunWorker = ModelRunThread(self.modelRunner, self.resultQueue)
         self.threadPool = QThreadPool()
