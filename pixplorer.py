@@ -12,6 +12,7 @@ import json
 import os
 from SlideModelRunner import SlideModelRunner
 from queue import Queue
+from pathlib import Path
 
 class AddNewColumnWorker(QRunnable):
     def __init__(self, tileManager, onLeft, debug=""):
@@ -795,7 +796,21 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def modelRunComplete(self):
-        print('Predictions shape from main thread: ', self.modelRunner.predictions.shape)
+        print('Generating mask from predictions... ', self.modelRunner.predictions.shape)
+        mask_save_file = self.currentModelOptions['masksave_file']
+        if mask_save_file == '':
+            mask_save_file_folder = Path(self.file).parent
+            mask_save_file_prefix = 'MASK'
+        else:
+            mask_save_file_folder = Path(mask_save_file).parent
+            mask_save_file_prefix = Path(mask_save_file).stem
+        mask_save_file_path = mask_save_file_folder / (mask_save_file_prefix + Path(self.file).stem + '.png')
+
+        predictions_mask = self.modelRunner.getMaskFromPredictions()
+        Image.fromarray(predictions_mask).save(mask_save_file_path)
+        print('Saved mask to ', mask_save_file_path)
+
+        self.graphicsScene.tileManager.setMaskFile(mask_save_file_path)
 
     def loadPlugins(self, file):
         with open(file, 'r') as f:
