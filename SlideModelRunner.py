@@ -65,7 +65,7 @@ class SlideModelRunner(QObject):
             print("loading model from file: "+self.model_file)
             self.model = load_model(self.model_file)
 
-    def patch_batch_generator(self, progressSignal=None):
+    def patch_batch_generator(self):
         '''
         Generating image batches from given slide and level using coordinates in tile_list
         images are normalized: (x-128)/128 before being returned
@@ -81,20 +81,18 @@ class SlideModelRunner(QObject):
                 b=0
                 images_batch = np.array(images)
                 images = []
-                if progressSignal != None:
-                    progressSignal.emit("Processing tile batches...", ceil(imgs_yielded*100/len(self.tile_list)))
+                self.progressSignal.emit("Processing tile batches...", ceil(imgs_yielded*100/len(self.tile_list)))
                 yield images_batch
             images.append(((self.getRegionFromSlide(level, coord, dims=dims).astype(np.float))-128)/128)
             b +=1
         images_batch = np.array(images)
-        if progressSignal != None:
-            progressSignal.emit("Processing tile batches...", 100)
+        self.progressSignal.emit("Processing tile batches...", 100)
         yield images_batch
 
-    def evaluateModelOnSlide(self, progressSignal=None):
+    def evaluateModelOnSlide(self):
         self.loadModel()
         steps = ceil((self.tile_list.shape[0])/self.batch_size)
-        gen = self.patch_batch_generator(progressSignal=progressSignal)
+        gen = self.patch_batch_generator()
         self.predictions = self.model.predict_generator(gen, steps, verbose=1)
         return self.predictions
 

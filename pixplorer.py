@@ -661,15 +661,44 @@ class ModelSelectDialog(QDialog):
 
         self.accept()
 
+class ProgressDialog(QDialog):
+    def __init__(self, modeloptions=None, parent=None):
+        super().__init__(parent=parent)
+        self.setWindowTitle("Running selected model...")
+        self.layout = QVBoxLayout()
+
+        self.label = QLabel("")
+        self.layout.addWidget(self.label)
+
+        self.progressBar = QProgressBar(self)
+        self.progressBar.setMinimum(0)
+        self.progressBar.setMaximum(100)
+        self.progressBar.setValue(0)
+        self.layout.addWidget(self.progressBar)
+
+        self.setLayout(self.layout)
+        if modeloptions != None:
+            self.setLabelText(modeloptions)
+
+    @pyqtSlot(str, int)
+    def updateProgress(self, msg, value):
+        self.progressBar.setValue(value)
+        if value >= 100:
+            self.close()
+
+    def setLabelText(self, modeloptions):
+        modelinfo = "Running model\t:\t{}\n \
+            On slide\t:\t{}\n".format(modeloptions['model_file'], modeloptions['slide_file'])
+        self.label.setText(modelinfo)
+
 class ModelRunThread(QRunnable):
-    def __init__(self, slideModelRunner, resultQueue, progressSignal=None):
+    def __init__(self, slideModelRunner, resultQueue):
         super().__init__()
         self.slideModelRunner = slideModelRunner
-        self.progressSignal = progressSignal
         self.resultQueue = resultQueue
 
     def run(self):
-        self.resultQueue.put(self.slideModelRunner.evaluateModelOnSlide(self.progressSignal))
+        self.resultQueue.put(self.slideModelRunner.evaluateModelOnSlide())
         self.slideModelRunner.modelRunCompleteSignal.emit()
 
 class MainWindow(QMainWindow):
@@ -751,6 +780,8 @@ class MainWindow(QMainWindow):
 
         self.progressBar = None
 
+        self.progressDialog = ProgressDialog(parent=self)
+
     def openSlideFile(self):
         dialog = QFileDialog(self, "Select slide file to open", "/home/mak/PathAI/slides")
         dialog.setNameFilter(self.OPENSLIDE_FORMATS)
@@ -775,6 +806,7 @@ class MainWindow(QMainWindow):
         #TODO: add slot for when the model file selection changes
         if self.modelSelector.exec() == QDialog.Accepted:
             self.currentModelOptions = self.modelSelector.formFields
+            self.currentModelOptions['slide_file'] = self.file
             self.runModelAction.setEnabled(True)
             if self.modelRunner != None:
                 self.modelRunner.updateParameters(self.currentModelOptions)
@@ -784,12 +816,15 @@ class MainWindow(QMainWindow):
             opts = self.currentModelOptions
             self.modelRunner = SlideModelRunner(opts['model_file'], self.file, tile_size=opts['tile_size'], batch_size=opts['batch_size'], prediction_level=opts['prediction_level'])
             self.modelRunner.modelRunCompleteSignal.connect(self.modelRunComplete)
+            self.modelRunner.progressSignal.connect(self.progressDialog.updateProgress)
             self.unloadModelSignal.connect(self.modelRunner.unloadModel)
         
+        self.progressDialog.setLabelText(self.currentModelOptions)
         self.resultQueue = Queue()
         modelRunWorker = ModelRunThread(self.modelRunner, self.resultQueue)
         self.threadPool = QThreadPool()
         self.threadPool.start(modelRunWorker)
+        self.progressDialog.exec()
 
         #mask_img = self.modelRunner.getMaskFromPredictions()
         #Image.fromarray(mask_img).save('mask.png')
